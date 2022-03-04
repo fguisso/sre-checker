@@ -113,17 +113,16 @@ func initConfig() {
 }
 
 // notifyEmail sends an email to informe actual service status.
-func notifyByEmail(email, service, status string) error {
+func notifyByEmail(email, service, status string) {
 	user := viper.GetString("SMTP_USER")
 	password := viper.GetString("SMTP_PASSWORD")
 	from := viper.GetString("SMTP_EMAIL")
+	addr := viper.GetString("SMTP_ADDR")
+	host := viper.GetString("SMTP_HOST")
 
 	to := []string{
 		email,
 	}
-
-	addr := "smtp.mailtrap.io:2525"
-	host := "smtp.mailtrap.io"
 
 	msg := []byte("From: sre-checker@sre.com\r\n" +
 		"To: " + email + "\r\n" +
@@ -135,11 +134,10 @@ func notifyByEmail(email, service, status string) error {
 	err := smtp.SendMail(addr, auth, from, to, msg)
 
 	if err != nil {
-		return err
+		fmt.Println("Email error:", err)
 	}
 
 	fmt.Println("Email sent successfully", service)
-	return nil
 }
 
 // testTontoHTTP make a GET request to Tonto service and check de response to
