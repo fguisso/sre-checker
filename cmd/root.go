@@ -7,11 +7,20 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/gorilla/feeds"
+	"github.com/gorilla/mux"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
+
+type status struct {
+	// tcpStatus = make(map[string]bool)
+	tcpStatus  string
+	httpStatus string
+}
 
 var (
 	cfgFile string
@@ -21,6 +30,7 @@ var (
 	timeout           time.Duration
 	healthThreshold   int32
 	unhealthThreshold int32
+	rssFeed           bool
 
 	tcpHost string
 	tcpPort string
@@ -29,6 +39,8 @@ var (
 	httpPort string
 
 	auth string
+
+	statusMtx sync.RWMutex
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -36,7 +48,18 @@ var rootCmd = &cobra.Command{
 	Use:   "sre-checker",
 	Short: "Check status from Tonto services",
 	Run: func(cmd *cobra.Command, args []string) {
-		tracking(cmd)
+		actualStatus := status{
+			tcpStatus:  "WAITING FOR STATUS",
+			httpStatus: "WAITING FOR STATUS",
+		}
+
+		tracking(cmd, &actualStatus)
+
+		rssFeedServer, _ := cmd.Flags().GetBool("rss-feed")
+		if rssFeedServer {
+			initRSSFeed(&actualStatus)
+		}
+
 	},
 }
 
@@ -58,6 +81,7 @@ func init() {
 	rootCmd.PersistentFlags().DurationVarP(&timeout, "timeout", "t", 30*time.Second, "Max timeout from service in seconds")
 	rootCmd.PersistentFlags().Int32Var(&healthThreshold, "health-thresold", 5, "Consecutive success")
 	rootCmd.PersistentFlags().Int32Var(&unhealthThreshold, "unhealth-thresold", 5, "Consecutive failures")
+	rootCmd.PersistentFlags().BoolVar(&rssFeed, "rss-feed", false, "Running RSS Feed server.")
 
 	rootCmd.PersistentFlags().StringVar(&tcpHost, "tcp-host", "", "TCP server host to be track")
 	rootCmd.PersistentFlags().StringVar(&tcpPort, "tcp-port", "80", "TCP server port to be track")
@@ -95,13 +119,13 @@ func initConfig() {
 func testTontoHTTP(host, port, authToken string) bool {
 	resp, err := http.Get("https://" + host + ":" + port + "/?auth=" + authToken + "&buf=testing")
 	if err != nil {
-		fmt.Println("HTTP GET request error:", err)
+		fmt.Println("HTTP: HTTP GET request error:", err)
 		return false
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		fmt.Println("Unexpect response status:", resp.Status)
+		fmt.Println("HTTP: Unexpect response status:", resp.Status)
 		return false
 	}
 
@@ -110,12 +134,12 @@ func testTontoHTTP(host, port, authToken string) bool {
 		if strings.Contains(scanner.Text(), "CLOUDWALK") {
 			return true
 		}
-		fmt.Println("Unexpected response message:", scanner.Text())
+		fmt.Println("HTTP: Unexpected response message:", scanner.Text())
 		return false
 	}
 
 	if err := scanner.Err(); err != nil {
-		fmt.Println("Scan message error:", err)
+		fmt.Println("HTTP: Scan message error:", err)
 		return false
 	}
 
@@ -129,14 +153,14 @@ func testTontoTCP(host, port, authToken string) bool {
 	// Parse the address.
 	tcpAddr, err := net.ResolveTCPAddr("tcp", host+":"+port)
 	if err != nil {
-		fmt.Printf("Wrong address: %v \n", err)
+		fmt.Println("TCP: Wrong address:", err)
 		return false
 	}
 
 	// Create the connection.
 	conn, err := net.DialTCP("tcp", nil, tcpAddr)
 	if err != nil {
-		fmt.Printf("Service offline: %v \n", err)
+		fmt.Println("TCP: Service offline:", err)
 		return false
 	}
 	defer conn.Close()
@@ -144,7 +168,7 @@ func testTontoTCP(host, port, authToken string) bool {
 	// Write the authentication.
 	_, err = conn.Write([]byte("auth " + authToken))
 	if err != nil {
-		fmt.Printf("Write authentication failure: %v \n", err)
+		fmt.Println("TCP: Write authentication failure:", err)
 		return false
 	}
 
@@ -153,7 +177,7 @@ func testTontoTCP(host, port, authToken string) bool {
 
 	_, err = conn.Read(authReply)
 	if err != nil {
-		fmt.Printf("Reads message error: %v \n", err)
+		fmt.Println("TCP: Reads message error:", err)
 		return false
 	}
 
@@ -161,13 +185,13 @@ func testTontoTCP(host, port, authToken string) bool {
 	if strings.Contains(string(authReply), "ok") {
 		_, err = conn.Write([]byte("Testing"))
 		if err != nil {
-			fmt.Printf("Write authentication failure: %v \n", err)
+			fmt.Println("TCP: Write authentication failure:", err)
 			return false
 		}
 
 		_, err = conn.Read(testReply)
 		if err != nil {
-			fmt.Printf("Reads message error: %v \n", err)
+			fmt.Println("TCP: Reads message error:", err)
 			return false
 		}
 
@@ -179,7 +203,12 @@ func testTontoTCP(host, port, authToken string) bool {
 	return false
 }
 
-func tracking(cmd *cobra.Command) {
+func tracking(cmd *cobra.Command, status *status) {
+	tcpHealthCount := 0
+	tcpUnhealthCount := 0
+	httpHealthCount := 0
+	httpUnhealthCount := 0
+
 	checkInterval, _ := cmd.Flags().GetDuration("check-interval")
 	tcpHost, _ := cmd.Flags().GetString("tcp-host")
 	tcpPort, _ := cmd.Flags().GetString("tcp-port")
@@ -189,19 +218,11 @@ func tracking(cmd *cobra.Command) {
 	healthThresold, _ := cmd.Flags().GetInt32("health-thresold")
 	unhealthThresold, _ := cmd.Flags().GetInt32("unhealth-thresold")
 
-	// tcpStatus := make(map[string]bool)
-	tcpHealthCount := 0
-	tcpUnhealthCount := 0
-	httpHealthCount := 0
-	httpUnhealthCount := 0
-
 	fmt.Println("Starting tracking...")
 
 	go func() {
 		for {
 			testResult := testTontoTCP(tcpHost, tcpPort, auth)
-			// tcpStatus[time.Now().String()] = testResult
-			// TODO: tcpStatus out of memory, persist data or something
 
 			if testResult {
 				tcpHealthCount++
@@ -213,11 +234,15 @@ func tracking(cmd *cobra.Command) {
 
 			if tcpHealthCount >= int(healthThresold) {
 				tcpHealthCount = int(healthThresold)
-				fmt.Println("Uptime")
+				statusMtx.Lock()
+				status.tcpStatus = "UP"
+				statusMtx.Unlock()
 			}
 			if tcpUnhealthCount >= int(unhealthThresold) {
 				tcpUnhealthCount = int(unhealthThresold)
-				fmt.Println("Downtime")
+				statusMtx.Lock()
+				status.tcpStatus = "DOWN"
+				statusMtx.Unlock()
 			}
 
 			fmt.Printf("Running... health: %v , unhealth: %v \n", tcpHealthCount, tcpUnhealthCount)
@@ -226,28 +251,77 @@ func tracking(cmd *cobra.Command) {
 		}
 	}()
 
-	for {
-		testResult := testTontoHTTP(httpHost, httpPort, auth)
+	go func() {
+		for {
+			testResult := testTontoHTTP(httpHost, httpPort, auth)
 
-		if testResult {
-			httpHealthCount++
-			httpUnhealthCount = 0
-		} else {
-			httpUnhealthCount++
-			httpHealthCount = 0
+			if testResult {
+				httpHealthCount++
+				httpUnhealthCount = 0
+			} else {
+				httpUnhealthCount++
+				httpHealthCount = 0
+			}
+
+			if httpHealthCount >= int(healthThresold) {
+				httpHealthCount = int(healthThresold)
+				statusMtx.Lock()
+				status.httpStatus = "UP"
+				statusMtx.Unlock()
+			}
+			if httpUnhealthCount >= int(unhealthThresold) {
+				httpUnhealthCount = int(unhealthThresold)
+				statusMtx.Lock()
+				status.httpStatus = "DOWN"
+				statusMtx.Unlock()
+			}
+
+			time.Sleep(checkInterval)
+		}
+	}()
+
+}
+
+func initRSSFeed(status *status) {
+	fmt.Println("Starting RSS Fedd server...")
+	router := mux.NewRouter()
+	router.HandleFunc("/rss", func(w http.ResponseWriter, r *http.Request) {
+		// Create RSS Feed Header
+		feed := &feeds.Feed{
+			Title:       "Tonto Services Monitor",
+			Link:        &feeds.Link{Href: "/rss"},
+			Description: "This is RSS Feeds with status from Tonto services.",
 		}
 
-		if httpHealthCount >= int(healthThresold) {
-			httpHealthCount = int(healthThresold)
-			fmt.Println("Uptime")
-		}
-		if httpUnhealthCount >= int(unhealthThresold) {
-			httpUnhealthCount = int(unhealthThresold)
-			fmt.Println("Downtime")
-		}
+		// Append TCP status
+		statusMtx.RLock()
+		feed.Add(&feeds.Item{
+			Title: "Tonto TCP Service is " + status.tcpStatus,
+			Link:  &feeds.Link{Href: "tonto.cloudwalk.io:3000"},
+		})
+		statusMtx.RUnlock()
 
-		fmt.Printf("Running... health: %v , unhealth: %v \n", httpHealthCount, httpUnhealthCount)
+		// Append HTTP status
+		statusMtx.RLock()
+		feed.Add(&feeds.Item{
+			Title: "Tonto HTTP Service is " + status.httpStatus,
+			Link:  &feeds.Link{Href: "https://tonto-http.cloudwalk.io"},
+		})
+		statusMtx.RUnlock()
 
-		time.Sleep(checkInterval)
-	}
+		w.Header().Set("Content-Type", "application/rss+xml;charset=UTF-8")
+		w.WriteHeader(http.StatusOK)
+
+		rssFeed := (&feeds.Rss{Feed: feed}).RssFeed()
+		err := feeds.WriteXML(rssFeed, w)
+		if err != nil {
+			fmt.Println("Write XML error:", err)
+		}
+	}).Methods("GET")
+
+	http.Handle("/", router)
+
+	//start and listen to requests
+	http.ListenAndServe("0.0.0.0:8080", router)
+
 }

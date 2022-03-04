@@ -25,6 +25,7 @@ Flags:
       --http-host string          HTTP server host to be track
       --http-port string          HTTP server port to be track (default "80")
       --notify-email string       Email to get notifications
+      --rss-feed                  Running RSS Feed server.
       --tcp-host string           TCP server host to be track
       --tcp-port string           TCP server port to be track (default "80")
   -t, --timeout duration          Max timeout from service in seconds (default 30s)
