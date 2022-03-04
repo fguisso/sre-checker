@@ -12,12 +12,13 @@ go install .
 ## Usage
 `sre-checker`
 
+Setting up the .env token and login infomration like the example in `.env.example`
+
 ```
 Usage:
   sre-checker [flags]
 
 Flags:
-      --auth string               Authentication token from server
       --check-interval duration   Check interval in seconds (default 5s)
       --config string             config file (default is $HOME/sre-checker.yaml)
       --health-thresold int32     Consecutive success (default 5)
@@ -31,3 +32,7 @@ Flags:
   -t, --timeout duration          Max timeout from service in seconds (default 30s)
       --unhealth-thresold int32   Consecutive failures (default 5)
 ```
+
+### Example
+
+`sre-checker --http-host tonto-http.nuvem.io --http-port 443 --tcp-host tonto.nuvem.io --tcp-port 3000 --health-thresold 5 --unhealth-thresold 5 --rss-feed --notify-email tonto@nuvem.io`

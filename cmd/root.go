@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/smtp"
 	"os"
 	"strings"
 	"sync"
@@ -37,8 +38,6 @@ var (
 
 	httpHost string
 	httpPort string
-
-	auth string
 
 	statusMtx sync.RWMutex
 )
@@ -87,7 +86,6 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&tcpPort, "tcp-port", "80", "TCP server port to be track")
 	rootCmd.PersistentFlags().StringVar(&httpHost, "http-host", "", "HTTP server host to be track")
 	rootCmd.PersistentFlags().StringVar(&httpPort, "http-port", "80", "HTTP server port to be track")
-	rootCmd.PersistentFlags().StringVar(&auth, "auth", "", "Authentication token from server")
 }
 
 // initConfig reads in config file and ENV variables if set.
@@ -112,6 +110,36 @@ func initConfig() {
 	if err := viper.ReadInConfig(); err == nil {
 		fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
 	}
+}
+
+// notifyEmail sends an email to informe actual service status.
+func notifyByEmail(email, service, status string) error {
+	user := viper.GetString("SMTP_USER")
+	password := viper.GetString("SMTP_PASSWORD")
+	from := viper.GetString("SMTP_EMAIL")
+
+	to := []string{
+		email,
+	}
+
+	addr := "smtp.mailtrap.io:2525"
+	host := "smtp.mailtrap.io"
+
+	msg := []byte("From: sre-checker@sre.com\r\n" +
+		"To: " + email + "\r\n" +
+		"Subject: Tonto " + service + " is " + status + "\r\n\r\n" +
+		"This is a status messager saying that Tonto " + service + " is " + status + "\r\n")
+
+	auth := smtp.PlainAuth("", user, password, host)
+
+	err := smtp.SendMail(addr, auth, from, to, msg)
+
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("Email sent successfully", service)
+	return nil
 }
 
 // testTontoHTTP make a GET request to Tonto service and check de response to
@@ -209,6 +237,7 @@ func tracking(cmd *cobra.Command, status *status) {
 	httpHealthCount := 0
 	httpUnhealthCount := 0
 
+	email, _ := cmd.Flags().GetString("notify-email")
 	checkInterval, _ := cmd.Flags().GetDuration("check-interval")
 	tcpHost, _ := cmd.Flags().GetString("tcp-host")
 	tcpPort, _ := cmd.Flags().GetString("tcp-port")
@@ -235,18 +264,23 @@ func tracking(cmd *cobra.Command, status *status) {
 			if tcpHealthCount >= int(healthThresold) {
 				tcpHealthCount = int(healthThresold)
 				statusMtx.Lock()
-				status.tcpStatus = "UP"
+				if status.tcpStatus != "UP" {
+					status.tcpStatus = "UP"
+					notifyByEmail(email, "TCP", status.tcpStatus)
+				}
 				statusMtx.Unlock()
 			}
 			if tcpUnhealthCount >= int(unhealthThresold) {
 				tcpUnhealthCount = int(unhealthThresold)
 				statusMtx.Lock()
-				status.tcpStatus = "DOWN"
+				if status.tcpStatus != "DOWN" {
+					status.tcpStatus = "DOWN"
+					notifyByEmail(email, "TCP", status.tcpStatus)
+				}
 				statusMtx.Unlock()
 			}
 
-			fmt.Printf("Running... health: %v , unhealth: %v \n", tcpHealthCount, tcpUnhealthCount)
-
+			fmt.Printf("TCP status count: health(%v) unhealth(%v) \n", tcpHealthCount, tcpUnhealthCount)
 			time.Sleep(checkInterval)
 		}
 	}()
@@ -266,16 +300,22 @@ func tracking(cmd *cobra.Command, status *status) {
 			if httpHealthCount >= int(healthThresold) {
 				httpHealthCount = int(healthThresold)
 				statusMtx.Lock()
-				status.httpStatus = "UP"
+				if status.httpStatus != "UP" {
+					status.httpStatus = "UP"
+					notifyByEmail(email, "HTTP", status.httpStatus)
+				}
 				statusMtx.Unlock()
 			}
 			if httpUnhealthCount >= int(unhealthThresold) {
 				httpUnhealthCount = int(unhealthThresold)
 				statusMtx.Lock()
-				status.httpStatus = "DOWN"
+				if status.httpStatus != "DOWN" {
+					status.httpStatus = "DOWN"
+					notifyByEmail(email, "HTTP", status.httpStatus)
+				}
 				statusMtx.Unlock()
 			}
-
+			fmt.Printf("HTTP status count: health(%v) unhealth(%v) \n", httpHealthCount, httpUnhealthCount)
 			time.Sleep(checkInterval)
 		}
 	}()
