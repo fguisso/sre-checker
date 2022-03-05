@@ -18,6 +18,8 @@ jobs:
           remote_branch: "main"
         env:
           HD_NOTIFY_EMAIL: "fguisso@gmail.com"
+          HD_HEALTH_THRESOLD: 5
+          HD_UNHEALTH_THRESOLD: 5
           HD_HTTP_HOST: ${{secrets.HTTP_HOST}}
           HD_HTTP_PORT: ${{secrets.HTTP_PORT}}
           HD_TCP_HOST: ${{secrets.TCP_HOST}}
