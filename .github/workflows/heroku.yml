@@ -1,0 +1,29 @@
+name: Deploy to Heroku
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: akhileshns/heroku-deploy@v3.12.12 # This is the action
+        with:
+          heroku_api_key: ${{secrets.HEROKU_API_KEY}}
+          heroku_app_name: "sre-checker-guisso" #Must be unique in Heroku
+          heroku_email: ${{secrets.HEROKU_EMAIL}}
+        env:
+          HD_NOTIFY_EMAIL: "fguisso@gmail.com"
+          HD_HTTP_HOST: ${{secrets.HTTP_HOST}}
+          HD_HTTP_PORT: ${{secrets.HTTP_PORT}}
+          HD_TCP_HOST: ${{secrets.TCP_HOST}}
+          HD_TCP_PORT: ${{secrets.TCP_PORT}}
+          HD_TONTO_AUTH: ${{secrets.TONTO_AUTH}}
+          HD_SMTP_ADDR: ${{secrets.SMTP_ADDR}}
+          HD_SMTP_HOST: ${{secrets.SMTP_HOST}}
+          HD_SMTP_EMAIL: ${{secrets.SMTP_EMAIL}}
+          HD_SMTP_USER: ${{secrets.SMTP_USER}}
+          HD_SMTP_PASSWORD: ${{secrets.SMTP_PASSWORD}}
