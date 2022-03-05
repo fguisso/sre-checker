@@ -32,6 +32,8 @@ var (
 	healthThreshold   int32
 	unhealthThreshold int32
 	rssFeed           bool
+	rssFeedHost       string
+	rssFeedPort       string
 
 	tcpHost string
 	tcpPort string
@@ -54,9 +56,11 @@ var rootCmd = &cobra.Command{
 
 		tracking(cmd, &actualStatus)
 
-		rssFeedServer, _ := cmd.Flags().GetBool("rss-feed")
-		if rssFeedServer {
-			initRSSFeed(&actualStatus)
+		rssServerHost, _ := cmd.Flags().GetString("rss-feed-host")
+		rssServerPort, _ := cmd.Flags().GetString("rss-feed-port")
+		enableRssServer, _ := cmd.Flags().GetBool("rss-feed")
+		if enableRssServer {
+			initRSSFeed(&actualStatus, rssServerHost, rssServerPort)
 		}
 
 	},
@@ -80,7 +84,9 @@ func init() {
 	rootCmd.PersistentFlags().DurationVarP(&timeout, "timeout", "t", 30*time.Second, "Max timeout from service in seconds")
 	rootCmd.PersistentFlags().Int32Var(&healthThreshold, "health-thresold", 5, "Consecutive success")
 	rootCmd.PersistentFlags().Int32Var(&unhealthThreshold, "unhealth-thresold", 5, "Consecutive failures")
-	rootCmd.PersistentFlags().BoolVar(&rssFeed, "rss-feed", false, "Running RSS Feed server.")
+	rootCmd.PersistentFlags().BoolVar(&rssFeed, "rss-feed", false, "Enable RSS Feed server.")
+	rootCmd.PersistentFlags().StringVar(&rssFeedHost, "rss-feed-host", "0.0.0.0", "RSS Feed server host")
+	rootCmd.PersistentFlags().StringVar(&rssFeedPort, "rss-feed-port", "80", "RSS Feed server port")
 
 	rootCmd.PersistentFlags().StringVar(&tcpHost, "tcp-host", "", "TCP server host to be track")
 	rootCmd.PersistentFlags().StringVar(&tcpPort, "tcp-port", "80", "TCP server port to be track")
@@ -100,7 +106,7 @@ func initConfig() {
 
 		// Search config in home directory with name "sre-checker" (without extension).
 		viper.AddConfigPath(home)
-		viper.SetConfigType("yml")
+		viper.SetConfigType("yaml")
 		viper.SetConfigName("sre-checker")
 	}
 
@@ -277,8 +283,6 @@ func tracking(cmd *cobra.Command, status *status) {
 				}
 				statusMtx.Unlock()
 			}
-
-			fmt.Printf("TCP status count: health(%v) unhealth(%v) \n", tcpHealthCount, tcpUnhealthCount)
 			time.Sleep(checkInterval)
 		}
 	}()
@@ -313,14 +317,13 @@ func tracking(cmd *cobra.Command, status *status) {
 				}
 				statusMtx.Unlock()
 			}
-			fmt.Printf("HTTP status count: health(%v) unhealth(%v) \n", httpHealthCount, httpUnhealthCount)
 			time.Sleep(checkInterval)
 		}
 	}()
 
 }
 
-func initRSSFeed(status *status) {
+func initRSSFeed(status *status, host, port string) {
 	fmt.Println("Starting RSS Fedd server...")
 	router := mux.NewRouter()
 	router.HandleFunc("/rss", func(w http.ResponseWriter, r *http.Request) {
@@ -360,6 +363,6 @@ func initRSSFeed(status *status) {
 	http.Handle("/", router)
 
 	//start and listen to requests
-	http.ListenAndServe("0.0.0.0:8080", router)
+	http.ListenAndServe(host+":"+port, router)
 
 }
