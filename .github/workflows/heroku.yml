@@ -15,6 +15,7 @@ jobs:
           heroku_api_key: ${{secrets.HEROKU_API_KEY}}
           heroku_app_name: "sre-checker-guisso" #Must be unique in Heroku
           heroku_email: ${{secrets.HEROKU_EMAIL}}
+          remote_branch: "main"
         env:
           HD_NOTIFY_EMAIL: "fguisso@gmail.com"
           HD_HTTP_HOST: ${{secrets.HTTP_HOST}}
